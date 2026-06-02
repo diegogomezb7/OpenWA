@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { ShutdownService } from './common/services/shutdown.service';
 import * as dotenv from 'dotenv';
@@ -75,6 +76,10 @@ async function bootstrap() {
   shutdownService.setShutdownCallback(async () => {
     await app.close();
   });
+
+  // Increase payload size limit for large batch uploads (e.g. Personas Excel)
+  app.use(json({ limit: '50mb' }));
+  app.use(urlencoded({ extended: true, limit: '50mb' }));
 
   // Enhanced Security Headers (Phase 3 Security Audit)
   app.use(

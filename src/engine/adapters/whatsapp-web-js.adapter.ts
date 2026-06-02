@@ -271,11 +271,25 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
 
   async sendTextMessage(chatId: string, text: string): Promise<MessageResult> {
     this.ensureReady();
+    await this.simulateHumanBehavior(chatId, text.length);
     const msg = await this.client!.sendMessage(chatId, text);
     return {
       id: msg.id._serialized,
       timestamp: msg.timestamp,
     };
+  }
+
+  private async simulateHumanBehavior(chatId: string, textLength: number): Promise<void> {
+    const chat = await this.client!.getChatById(chatId);
+    await chat.sendStateTyping();
+    const typingDelay = Math.min(Math.max(textLength * 40, 800), 4000) + Math.random() * 1500;
+    await this.sleep(typingDelay);
+    await chat.clearState();
+    await this.sleep(100 + Math.random() * 200);
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   async sendImageMessage(chatId: string, media: MediaInput): Promise<MessageResult> {
@@ -297,18 +311,21 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
   private async sendMediaMessage(chatId: string, media: MediaInput): Promise<MessageResult> {
     this.ensureReady();
 
+    const chat = await this.client!.getChatById(chatId);
+    await chat.sendStateTyping();
+    await this.sleep(500 + Math.random() * 1000);
+    await chat.clearState();
+    await this.sleep(200 + Math.random() * 300);
+
     let messageMedia: MessageMedia;
 
     if (typeof media.data === 'string') {
       if (media.data.startsWith('http://') || media.data.startsWith('https://')) {
-        // URL
         messageMedia = await MessageMedia.fromUrl(media.data);
       } else {
-        // Base64
         messageMedia = new MessageMedia(media.mimetype, media.data, media.filename);
       }
     } else {
-      // Buffer
       messageMedia = new MessageMedia(media.mimetype, media.data.toString('base64'), media.filename);
     }
 

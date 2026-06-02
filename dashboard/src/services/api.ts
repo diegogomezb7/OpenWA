@@ -270,25 +270,25 @@ export const messageApi = {
       method: 'POST',
       body: JSON.stringify({ chatId, text }),
     }),
-  sendImage: (sessionId: string, chatId: string, url: string, caption?: string) =>
+  sendImage: (sessionId: string, chatId: string, url?: string, caption?: string, base64?: string, mimetype?: string, filename?: string) =>
     request<MessageResponse>(`/sessions/${sessionId}/messages/send-image`, {
       method: 'POST',
-      body: JSON.stringify({ chatId, url, caption }),
+      body: JSON.stringify({ chatId, url, caption, base64, mimetype, filename }),
     }),
-  sendVideo: (sessionId: string, chatId: string, url: string, caption?: string) =>
+  sendVideo: (sessionId: string, chatId: string, url?: string, caption?: string, base64?: string, mimetype?: string, filename?: string) =>
     request<MessageResponse>(`/sessions/${sessionId}/messages/send-video`, {
       method: 'POST',
-      body: JSON.stringify({ chatId, url, caption }),
+      body: JSON.stringify({ chatId, url, caption, base64, mimetype, filename }),
     }),
-  sendAudio: (sessionId: string, chatId: string, url: string) =>
+  sendAudio: (sessionId: string, chatId: string, url?: string, base64?: string, mimetype?: string, filename?: string) =>
     request<MessageResponse>(`/sessions/${sessionId}/messages/send-audio`, {
       method: 'POST',
-      body: JSON.stringify({ chatId, url }),
+      body: JSON.stringify({ chatId, url, base64, mimetype, filename }),
     }),
-  sendDocument: (sessionId: string, chatId: string, url: string, filename?: string) =>
+  sendDocument: (sessionId: string, chatId: string, url?: string, filename?: string, base64?: string, mimetype?: string, caption?: string) =>
     request<MessageResponse>(`/sessions/${sessionId}/messages/send-document`, {
       method: 'POST',
-      body: JSON.stringify({ chatId, url, filename }),
+      body: JSON.stringify({ chatId, url, filename, base64, mimetype, caption }),
     }),
 };
 

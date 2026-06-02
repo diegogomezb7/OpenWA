@@ -105,6 +105,8 @@ services:
     container_name: openwa-dashboard
     profiles: ['with-dashboard', 'full']
     restart: unless-stopped
+    ports:
+      - '127.0.0.1:2886:80'
     expose:
       - '80'
     depends_on:
@@ -119,6 +121,8 @@ services:
     container_name: openwa-postgres
     profiles: ['postgres']
     restart: unless-stopped
+    ports:
+      - '127.0.0.1:5432:5432'
     environment:
       POSTGRES_USER: ${DATABASE_USERNAME:-openwa}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-openwa}

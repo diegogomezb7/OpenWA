@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Send, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { Send, CheckCircle, XCircle, Loader2, Upload, Trash2 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { messageApi } from '../services/api';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useRole } from '../hooks/useRole';
@@ -25,11 +26,20 @@ export function MessageTester() {
   const sessions = allSessions.filter(s => s.status === 'ready');
   const [session, setSession] = useState('');
   const [recipient, setRecipient] = useState('');
-  const [recipientType, setRecipientType] = useState<'personal' | 'group'>('personal');
+  const [recipientType, setRecipientType] = useState<'personal' | 'group' | 'personas' | 'excel'>('personal');
   const [selectedGroup, setSelectedGroup] = useState('');
+  const [personas, setPersonas] = useState<any[]>([]);
+  const [excelData, setExcelData] = useState<any[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [loadingPersonas, setLoadingPersonas] = useState(false);
+  const [progress, setProgress] = useState<{current: number, total: number} | null>(null);
   const [messageType, setMessageType] = useState<typeof messageTypes[number]>('text');
   const [content, setContent] = useState('');
   const [mediaUrl, setMediaUrl] = useState('');
+  const [mediaFile, setMediaFile] = useState<File | null>(null);
+  const [mediaBase64, setMediaBase64] = useState<string>('');
+  const [mediaMimeType, setMediaMimeType] = useState<string>('');
+  const [mediaFileName, setMediaFileName] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [response, setResponse] = useState<ApiResponse | null>(null);
 
@@ -53,41 +63,195 @@ export function MessageTester() {
     }
   }, [groups, selectedGroup, recipientType]);
 
-  const handleSend = async () => {
-    const targetId = recipientType === 'group' ? selectedGroup : recipient;
-    if (!session || !targetId) return;
-    setIsLoading(true);
-    setResponse(null);
+  useEffect(() => {
+    if (recipientType === 'personas' && personas.length === 0) {
+      setLoadingPersonas(true);
+      fetch('/api/personas', {
+        headers: { 'X-API-Key': sessionStorage.getItem('openwa_api_key') || '' }
+      })
+      .then(res => res.json())
+      .then(data => {
+        setPersonas(data.data || []);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingPersonas(false));
+    }
+  }, [recipientType]);
 
-    const chatId = recipientType === 'group' ? targetId : targetId.replace(/[^0-9]/g, '') + '@c.us';
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    try {
-      let result;
-      if (messageType === 'text') {
-        result = await messageApi.sendText(session, chatId, content);
-      } else if (messageType === 'image') {
-        result = await messageApi.sendImage(session, chatId, mediaUrl, content);
-      } else if (messageType === 'video') {
-        result = await messageApi.sendVideo(session, chatId, mediaUrl, content);
-      } else if (messageType === 'audio') {
-        result = await messageApi.sendAudio(session, chatId, mediaUrl);
-      } else {
-        result = await messageApi.sendDocument(session, chatId, mediaUrl, content);
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws);
+        
+        // Map to lowercase and remove accents/spaces for keys
+        const mappedData = data.map((row: any) => {
+          const mapped: any = {};
+          Object.keys(row).forEach(key => {
+            const cleanKey = key.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+            mapped[cleanKey] = row[key];
+          });
+          return mapped;
+        });
+
+        const validContacts = mappedData.filter(r => r.telefono || r.phone || r.celular);
+        
+        // Normalize the phone field name to 'telefono'
+        const normalizedContacts = validContacts.map(c => ({
+          ...c,
+          telefono: String(c.telefono || c.phone || c.celular).trim()
+        }));
+
+        // Remove duplicates by 'telefono'
+        const uniqueContacts = normalizedContacts.filter((contact, index, self) =>
+          index === self.findIndex((t) => t.telefono === contact.telefono)
+        );
+
+        setExcelData(uniqueContacts);
+      } catch (error) {
+        console.error('Error parsing Excel file:', error);
       }
+    };
+    reader.readAsBinaryString(file);
+  };
 
+  const handleClearExcel = () => {
+    setExcelData([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleMediaUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      setMediaFile(null);
+      setMediaBase64('');
+      setMediaMimeType('');
+      setMediaFileName('');
+      return;
+    }
+    
+    setMediaFile(file);
+    setMediaMimeType(file.type);
+    setMediaFileName(file.name);
+    
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const bstr = evt.target?.result as string;
+      const b64 = bstr.split(',')[1] || '';
+      setMediaBase64(b64);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSend = async () => {
+    if (!session) return;
+    
+    if (recipientType === 'personal' || recipientType === 'group') {
+      const targetId = recipientType === 'group' ? selectedGroup : recipient;
+      if (!targetId) return;
+      setIsLoading(true);
+      setResponse(null);
+
+      const chatId = recipientType === 'group' ? targetId : targetId.replace(/[^0-9]/g, '') + '@c.us';
+
+      try {
+        let result;
+        const parsedContent = content.replace(/\\n/g, '\n').replace(/\/n/g, '\n');
+        
+        if (messageType === 'text') {
+          result = await messageApi.sendText(session, chatId, parsedContent);
+        } else if (messageType === 'image') {
+          result = await messageApi.sendImage(session, chatId, mediaUrl || undefined, parsedContent, mediaBase64 || undefined, mediaMimeType || undefined, mediaFileName || undefined);
+        } else if (messageType === 'video') {
+          result = await messageApi.sendVideo(session, chatId, mediaUrl || undefined, parsedContent, mediaBase64 || undefined, mediaMimeType || undefined, mediaFileName || undefined);
+        } else if (messageType === 'audio') {
+          result = await messageApi.sendAudio(session, chatId, mediaUrl || undefined, mediaBase64 || undefined, mediaMimeType || undefined, mediaFileName || undefined);
+        } else {
+          result = await messageApi.sendDocument(session, chatId, mediaUrl || undefined, parsedContent, mediaBase64 || undefined, mediaMimeType || undefined, parsedContent);
+        }
+
+        setResponse({
+          success: !!result.messageId,
+          messageId: result.messageId,
+          timestamp: result.timestamp ? new Date(result.timestamp * 1000).toISOString() : new Date().toISOString(),
+        });
+      } catch (err) {
+        setResponse({
+          success: false,
+          timestamp: new Date().toISOString(),
+          error: err instanceof Error ? err.message : t('messageTester.sendFailed'),
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    } else {
+      // Bulk Send to Personas or Excel
+      const targetList = recipientType === 'excel' ? excelData : personas;
+      if (targetList.length === 0) return;
+      
+      setIsLoading(true);
+      setResponse(null);
+      
+      let successCount = 0;
+      let failCount = 0;
+      
+      for (let i = 0; i < targetList.length; i++) {
+        setProgress({ current: i + 1, total: targetList.length });
+        const p = targetList[i];
+        if (!p.telefono) {
+          failCount++;
+          continue;
+        }
+        const chatId = p.telefono.replace(/[^0-9]/g, '') + '@c.us';
+        
+        try {
+          const parsedContent = content.replace(/\\n/g, '\n').replace(/\/n/g, '\n');
+          
+          if (messageType === 'text') {
+            await messageApi.sendText(session, chatId, parsedContent);
+          } else if (messageType === 'image') {
+            await messageApi.sendImage(session, chatId, mediaUrl || undefined, parsedContent, mediaBase64 || undefined, mediaMimeType || undefined, mediaFileName || undefined);
+          } else if (messageType === 'video') {
+            await messageApi.sendVideo(session, chatId, mediaUrl || undefined, parsedContent, mediaBase64 || undefined, mediaMimeType || undefined, mediaFileName || undefined);
+          } else if (messageType === 'audio') {
+            await messageApi.sendAudio(session, chatId, mediaUrl || undefined, mediaBase64 || undefined, mediaMimeType || undefined, mediaFileName || undefined);
+          } else {
+            await messageApi.sendDocument(session, chatId, mediaUrl || undefined, parsedContent, mediaBase64 || undefined, mediaMimeType || undefined, parsedContent);
+          }
+          successCount++;
+        } catch (err) {
+          failCount++;
+        }
+        
+        // Anti-ban delay logic
+        if (i < targetList.length - 1) {
+          if ((i + 1) % 10 === 0) {
+            // Espera de 30 segundos cada 10 mensajes
+            await new Promise(r => setTimeout(r, 30000));
+          } else {
+            // Intervalo aleatorio entre 15 y 20 segundos
+            const delay = Math.floor(Math.random() * (20000 - 15000 + 1)) + 15000;
+            await new Promise(r => setTimeout(r, delay));
+          }
+        }
+      }
+      
       setResponse({
-        success: !!result.messageId,
-        messageId: result.messageId,
-        timestamp: result.timestamp ? new Date(result.timestamp * 1000).toISOString() : new Date().toISOString(),
-      });
-    } catch (err) {
-      setResponse({
-        success: false,
+        success: true,
         timestamp: new Date().toISOString(),
-        error: err instanceof Error ? err.message : t('messageTester.sendFailed'),
+        error: `Enviados: ${successCount}, Fallidos: ${failCount}`,
       });
-    } finally {
       setIsLoading(false);
+      setProgress(null);
     }
   };
 
@@ -134,11 +298,25 @@ export function MessageTester() {
               <button className={recipientType === 'group' ? 'active' : ''} onClick={() => setRecipientType('group')}>
                 {t('messageTester.group')}
               </button>
+              <button className={recipientType === 'personas' ? 'active' : ''} onClick={() => setRecipientType('personas')}>
+                Personas
+              </button>
+              <button className={recipientType === 'excel' ? 'active' : ''} onClick={() => setRecipientType('excel')}>
+                Excel
+              </button>
             </div>
           </div>
 
           <div className="form-group">
-            <label>{recipientType === 'group' ? t('messageTester.selectGroup') : t('messageTester.recipientPhone')}</label>
+            <label>
+              {recipientType === 'group' 
+                ? t('messageTester.selectGroup') 
+                : recipientType === 'personas' 
+                  ? 'Directorio de Personas' 
+                  : recipientType === 'excel'
+                    ? 'Subir Excel'
+                    : t('messageTester.recipientPhone')}
+            </label>
             {recipientType === 'group' ? (
               <>
                 <select
@@ -155,6 +333,53 @@ export function MessageTester() {
                   ))}
                 </select>
                 <span className="hint">{t('messageTester.selectGroupHint')}</span>
+              </>
+            ) : recipientType === 'personas' ? (
+              <>
+                <div style={{ padding: '10px', background: 'var(--bg-secondary)', borderRadius: '6px' }}>
+                  {loadingPersonas ? (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Loader2 className="animate-spin" size={16} /> Cargando personas...
+                    </span>
+                  ) : (
+                    <span><strong>{personas.length}</strong> personas encontradas en el directorio.</span>
+                  )}
+                </div>
+                <span className="hint">El mensaje se enviará a todas estas personas, con un pequeño retraso entre cada uno.</span>
+              </>
+            ) : recipientType === 'excel' ? (
+              <>
+                <div style={{ padding: '10px', background: 'var(--bg-secondary)', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <input 
+                      type="file" 
+                      ref={fileInputRef}
+                      onChange={handleFileUpload}
+                      accept=".xlsx, .xls, .csv"
+                      style={{ display: 'none' }}
+                    />
+                    <button 
+                      className="btn"
+                      onClick={() => fileInputRef.current?.click()}
+                      style={{ padding: '6px 12px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <Upload size={16} /> {excelData.length > 0 ? 'Cambiar Archivo' : 'Subir Archivo'}
+                    </button>
+                    {excelData.length > 0 && (
+                      <button 
+                        className="btn"
+                        onClick={handleClearExcel}
+                        style={{ padding: '6px 12px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px', background: '#DC2626', color: 'white', border: 'none' }}
+                      >
+                        <Trash2 size={16} /> Eliminar
+                      </button>
+                    )}
+                  </div>
+                  {excelData.length > 0 && (
+                    <span><strong>{excelData.length}</strong> números cargados correctamente desde el Excel.</span>
+                  )}
+                </div>
+                <span className="hint">Asegúrate de que tu Excel tenga una columna llamada "telefono" o "phone".</span>
               </>
             ) : (
               <>
@@ -197,25 +422,45 @@ export function MessageTester() {
           ) : (
             <>
               <div className="form-group">
-                <label>{t('messageTester.mediaUrl')}</label>
-                <input
-                  type="text"
-                  value={mediaUrl}
-                  onChange={e => setMediaUrl(e.target.value)}
-                  placeholder="https://example.com/file.jpg"
-                />
+                <label>Media URL (o subir archivo)</label>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    value={mediaUrl}
+                    onChange={e => setMediaUrl(e.target.value)}
+                    placeholder="https://example.com/file.jpg"
+                    disabled={!!mediaFile}
+                    style={{ flex: 1 }}
+                  />
+                  <span>o</span>
+                  <input
+                    type="file"
+                    onChange={handleMediaUpload}
+                    accept={messageType === 'image' ? 'image/*' : messageType === 'video' ? 'video/*' : messageType === 'audio' ? 'audio/*' : '*/*'}
+                    style={{ flex: 1, padding: '8px' }}
+                  />
+                </div>
               </div>
               {messageType !== 'audio' && (
                 <div className="form-group">
                   <label>
-                    {messageType === 'document' ? t('messageTester.filename') : t('messageTester.caption')} ({t('common.optional')})
+                    {messageType === 'document' ? `${t('messageTester.filename')} (${t('common.optional')})` : t('messageTester.messageContent')}
                   </label>
-                  <input
-                    type="text"
-                    value={content}
-                    onChange={e => setContent(e.target.value)}
-                    placeholder={messageType === 'document' ? t('messageTester.filenamePlaceholder') : t('messageTester.captionPlaceholder')}
-                  />
+                  {messageType === 'document' ? (
+                    <input
+                      type="text"
+                      value={content}
+                      onChange={e => setContent(e.target.value)}
+                      placeholder={t('messageTester.filenamePlaceholder')}
+                    />
+                  ) : (
+                    <textarea
+                      value={content}
+                      onChange={e => setContent(e.target.value)}
+                      placeholder={t('messageTester.messagePlaceholder')}
+                      rows={5}
+                    />
+                  )}
                 </div>
               )}
             </>
@@ -224,10 +469,15 @@ export function MessageTester() {
           <button
             className="send-btn"
             onClick={handleSend}
-            disabled={!canWrite || isLoading || !session || (recipientType === 'group' ? !selectedGroup : !recipient)}
+            disabled={
+              !canWrite || 
+              isLoading || 
+              !session || 
+              (recipientType === 'group' ? !selectedGroup : recipientType === 'personas' ? personas.length === 0 : recipientType === 'excel' ? excelData.length === 0 : !recipient)
+            }
           >
             {isLoading ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
-            {isLoading ? t('messageTester.sending') : canWrite ? t('messageTester.send') : t('messageTester.viewOnly')}
+            {isLoading ? (progress ? `Enviando (${progress.current}/${progress.total})...` : t('messageTester.sending')) : canWrite ? t('messageTester.send') : t('messageTester.viewOnly')}
           </button>
         </div>
 

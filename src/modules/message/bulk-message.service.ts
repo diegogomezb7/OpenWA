@@ -288,7 +288,9 @@ export class BulkMessageService {
   private calculateDelay(options: { delayBetweenMessages: number; randomizeDelay: boolean }): number {
     let delay = options.delayBetweenMessages;
     if (options.randomizeDelay) {
-      delay += Math.random() * 2000; // Add 0-2 seconds random
+      const variance = delay * 0.5;
+      delay = delay - variance / 2 + Math.random() * variance;
+      delay += Math.random() * 3000;
     }
     return delay;
   }
