@@ -18,6 +18,33 @@ interface ApiResponse {
 
 const messageTypes = ['text', 'image', 'video', 'audio', 'document'] as const;
 
+function resolveSpintax(text: string): string {
+  const spintaxRegex = /\{([^{}]+)\}/g;
+  let resolvedText = text;
+  let match;
+  // Use match loop to handle multiple spintax blocks
+  while ((match = spintaxRegex.exec(resolvedText)) !== null) {
+    const options = match[1].split('|');
+    const randomOption = options[Math.floor(Math.random() * options.length)];
+    resolvedText = resolvedText.replace(match[0], randomOption);
+    spintaxRegex.lastIndex = 0; // Reset index because string length changed
+  }
+  return resolvedText;
+}
+
+function resolveVariables(text: string, persona: any): string {
+  if (!persona) return text;
+  let resolvedText = text;
+  const variables = Object.keys(persona);
+  for (const v of variables) {
+    // Escape variable names that might have special characters just in case
+    const safeVarName = v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`\\{\\{${safeVarName}\\}\\}`, 'gi');
+    resolvedText = resolvedText.replace(regex, persona[v] || '');
+  }
+  return resolvedText;
+}
+
 export function MessageTester() {
   const { t } = useTranslation();
   useDocumentTitle(t('messageTester.title'));
@@ -66,7 +93,7 @@ export function MessageTester() {
   useEffect(() => {
     if (recipientType === 'personas' && personas.length === 0) {
       setLoadingPersonas(true);
-      fetch('/api/personas', {
+      fetch('/api/personas?limit=100000', {
         headers: { 'X-API-Key': sessionStorage.getItem('openwa_api_key') || '' }
       })
       .then(res => res.json())
@@ -161,11 +188,19 @@ export function MessageTester() {
       setIsLoading(true);
       setResponse(null);
 
-      const chatId = recipientType === 'group' ? targetId : targetId.replace(/[^0-9]/g, '') + '@c.us';
-
+      let chatId = targetId;
+      if (recipientType !== 'group') {
+        let cleanPhone = targetId.replace(/[^0-9]/g, '');
+        if (!cleanPhone.startsWith('57')) {
+          cleanPhone = '57' + cleanPhone;
+        }
+        chatId = cleanPhone + '@c.us';
+      }
       try {
         let result;
-        const parsedContent = content.replace(/\\n/g, '\n').replace(/\/n/g, '\n');
+        // Apply spintax and variables for single sends too if they use it (but no persona object)
+        let parsedContent = content.replace(/\\n/g, '\n').replace(/\/n/g, '\n');
+        parsedContent = resolveSpintax(parsedContent);
         
         if (messageType === 'text') {
           result = await messageApi.sendText(session, chatId, parsedContent);
@@ -211,10 +246,16 @@ export function MessageTester() {
           failCount++;
           continue;
         }
-        const chatId = p.telefono.replace(/[^0-9]/g, '') + '@c.us';
+        let cleanPhone = String(p.telefono).replace(/[^0-9]/g, '');
+        if (!cleanPhone.startsWith('57')) {
+          cleanPhone = '57' + cleanPhone;
+        }
+        const chatId = cleanPhone + '@c.us';
         
         try {
-          const parsedContent = content.replace(/\\n/g, '\n').replace(/\/n/g, '\n');
+          let parsedContent = content.replace(/\\n/g, '\n').replace(/\/n/g, '\n');
+          parsedContent = resolveVariables(parsedContent, p);
+          parsedContent = resolveSpintax(parsedContent);
           
           if (messageType === 'text') {
             await messageApi.sendText(session, chatId, parsedContent);
@@ -415,9 +456,13 @@ export function MessageTester() {
               <textarea
                 value={content}
                 onChange={e => setContent(e.target.value)}
-                placeholder={t('messageTester.messagePlaceholder')}
+                placeholder="Ejemplo: {Hola|Buenos días} {{nombres}}, tu paquete va hacia {{municipio}}."
                 rows={5}
               />
+              <span className="hint" style={{ marginTop: '8px', display: 'block', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                <strong>Spintax:</strong> Usa <code>{'{Opcion1|Opcion2}'}</code> para rotar palabras.<br />
+                <strong>Variables:</strong> Usa <code>{'{{columna}}'}</code> para personalizar (ej. <code>{'{{nombres}}'}</code>, <code>{'{{telefono}}'}</code>).
+              </span>
             </div>
           ) : (
             <>

@@ -280,12 +280,18 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
   }
 
   private async simulateHumanBehavior(chatId: string, textLength: number): Promise<void> {
-    const chat = await this.client!.getChatById(chatId);
-    await chat.sendStateTyping();
-    const typingDelay = Math.min(Math.max(textLength * 40, 800), 4000) + Math.random() * 1500;
-    await this.sleep(typingDelay);
-    await chat.clearState();
-    await this.sleep(100 + Math.random() * 200);
+    try {
+      const chat = await this.client!.getChatById(chatId);
+      await chat.sendStateTyping();
+      const typingDelay = Math.min(Math.max(textLength * 40, 800), 4000) + Math.random() * 1500;
+      await this.sleep(typingDelay);
+      await chat.clearState();
+      await this.sleep(100 + Math.random() * 200);
+    } catch (error) {
+      this.logger.debug(`Could not simulate typing for ${chatId}`, String(error));
+      // Fallback: just wait a bit instead of typing
+      await this.sleep(500 + Math.random() * 1000);
+    }
   }
 
   private sleep(ms: number): Promise<void> {
@@ -311,11 +317,16 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
   private async sendMediaMessage(chatId: string, media: MediaInput): Promise<MessageResult> {
     this.ensureReady();
 
-    const chat = await this.client!.getChatById(chatId);
-    await chat.sendStateTyping();
-    await this.sleep(500 + Math.random() * 1000);
-    await chat.clearState();
-    await this.sleep(200 + Math.random() * 300);
+    try {
+      const chat = await this.client!.getChatById(chatId);
+      await chat.sendStateTyping();
+      await this.sleep(500 + Math.random() * 1000);
+      await chat.clearState();
+      await this.sleep(200 + Math.random() * 300);
+    } catch (error) {
+      this.logger.debug(`Could not simulate typing for media ${chatId}`, String(error));
+      await this.sleep(500 + Math.random() * 500);
+    }
 
     let messageMedia: MessageMedia;
 

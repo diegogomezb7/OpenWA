@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, FileSpreadsheet, Loader2, Download } from 'lucide-react';
+import { Upload, FileSpreadsheet, Loader2, Download, Trash2, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import './Personas.css';
 import { useToast } from '../components/Toast';
@@ -12,19 +12,64 @@ interface Persona {
   telefono: string;
   departamento: string;
   municipio: string;
+  tipo?: string;
+  telefonoWap?: string;
+  tipoDocumento?: string;
+  tipoRegistro?: string;
+  clasificacionRegistro?: string;
+  TipoEstructuraRegistro?: string;
 }
 
 export function Personas() {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  
+  // Pagination & Search state
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const limit = 10;
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { error, success } = useToast();
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 500);
+    return () => clearTimeout(handler);
+  }, [search]);
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('¿Estás seguro de eliminar esta persona?')) return;
+
+    setDeletingId(id);
+    try {
+      const response = await fetch(`/api/personas/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'X-API-Key': sessionStorage.getItem('openwa_api_key') || '',
+        }
+      });
+      if (!response.ok) throw new Error('Error al eliminar');
+
+      success('Persona eliminada');
+      fetchPersonas();
+    } catch (err) {
+      error('Error al eliminar persona');
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const fetchPersonas = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/personas', {
+      const response = await fetch(`/api/personas?page=${page}&limit=${limit}&search=${encodeURIComponent(debouncedSearch)}`, {
         headers: {
           'X-API-Key': sessionStorage.getItem('openwa_api_key') || '',
         }
@@ -32,6 +77,7 @@ export function Personas() {
       if (!response.ok) throw new Error('Failed to fetch personas');
       const data = await response.json();
       setPersonas(data.data || []);
+      setTotal(data.total || 0);
     } catch (err) {
       error('Error loading personas');
     } finally {
@@ -41,7 +87,7 @@ export function Personas() {
 
   useEffect(() => {
     fetchPersonas();
-  }, []);
+  }, [page, debouncedSearch]);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -53,10 +99,10 @@ export function Personas() {
       const workbook = XLSX.read(data);
       const firstSheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[firstSheetName];
-      
+
       // Parse as JSON array of objects
       const jsonData = XLSX.utils.sheet_to_json(worksheet);
-      
+
       if (jsonData.length === 0) {
         throw new Error('El archivo está vacío');
       }
@@ -68,7 +114,13 @@ export function Personas() {
         numDoc: row.numDoc || row.NumDoc || row.NUMDOC || row.Documento || row.documento || '',
         telefono: row.telefono || row.Telefono || row.Teléfono || row.TELEFONO || '',
         departamento: row.departamento || row.Departamento || row.DEPARTAMENTO || '',
-        municipio: row.municipio || row.Municipio || row.MUNICIPIO || ''
+        municipio: row.municipio || row.Municipio || row.MUNICIPIO || '',
+        tipo: row.tipo || row.Tipo || row.TIPO || '',
+        telefonoWap: row.telefonoWap || row.TelefonoWap || row.TELEFONOWAP || '',
+        tipoDocumento: row.tipoDocumento || row.TipoDocumento || row.TIPODOCUMENTO || '',
+        tipoRegistro: row.tipoRegistro || row.TipoRegistro || row.TIPOREGISTRO || '',
+        clasificacionRegistro: row.clasificacionRegistro || row.ClasificacionRegistro || row.CLASIFICACIONREGISTRO || '',
+        TipoEstructuraRegistro: row.TipoEstructuraRegistro || row.tipoEstructuraRegistro || row.TIPOESTRUCTURAREGISTRO || ''
       }));
 
       // Send to API
@@ -84,10 +136,19 @@ export function Personas() {
       if (!response.ok) {
         throw new Error('Error guardando en el servidor');
       }
-
-      success(`Se cargaron exitosamente ${mappedPersonas.length} personas`);
-      fetchPersonas();
       
+      const savedPersonas = await response.json();
+      const savedCount = savedPersonas.length || 0;
+      const ignoredCount = mappedPersonas.length - savedCount;
+
+      if (ignoredCount > 0) {
+        success(`Se guardaron ${savedCount} personas nuevas. (${ignoredCount} fueron omitidas por errores o duplicidad)`);
+      } else {
+        success(`Se cargaron exitosamente ${savedCount} personas`);
+      }
+
+      fetchPersonas();
+
     } catch (err: any) {
       error(err.message || 'Error procesando archivo');
     } finally {
@@ -103,7 +164,13 @@ export function Personas() {
       Documento: '12345678',
       Telefono: '1234567890',
       Departamento: 'Lima',
-      Municipio: 'Miraflores'
+      Municipio: 'Miraflores',
+      Tipo: 'Natural',
+      TelefonoWap: '1234567890',
+      TipoDocumento: 'DNI',
+      TipoRegistro: 'Nuevo',
+      ClasificacionRegistro: 'A',
+      TipoEstructuraRegistro: 'Base'
     }]);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Plantilla');
@@ -117,9 +184,9 @@ export function Personas() {
           <h1 className="page-title">Directorio de Personas</h1>
           <p className="page-description">Gestiona y carga tu base de contactos</p>
         </div>
-        
+
         <div className="header-actions">
-          <button 
+          <button
             className="btn"
             style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
             onClick={downloadTemplate}
@@ -128,15 +195,15 @@ export function Personas() {
             <Download size={20} />
             <span>Descargar Plantilla</span>
           </button>
-          
-          <input 
-            type="file" 
+
+          <input
+            type="file"
             ref={fileInputRef}
-            onChange={handleFileUpload} 
-            accept=".xlsx, .xls, .csv" 
-            style={{ display: 'none' }} 
+            onChange={handleFileUpload}
+            accept=".xlsx, .xls, .csv"
+            style={{ display: 'none' }}
           />
-          <button 
+          <button
             className="btn btn-primary"
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
@@ -148,6 +215,21 @@ export function Personas() {
       </div>
 
       <div className="card personas-content">
+        <div className="table-controls" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+          <div className="search-box" style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-secondary)', padding: '0.5rem', borderRadius: '0.5rem', width: '300px' }}>
+            <Search size={18} style={{ marginRight: '0.5rem', color: 'var(--text-muted)' }} />
+            <input 
+              type="text" 
+              placeholder="Buscar por doc, nombre o tel..." 
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ border: 'none', background: 'transparent', outline: 'none', width: '100%', color: 'var(--text-primary)' }}
+            />
+          </div>
+          <div style={{ color: 'var(--text-secondary)' }}>
+            Total registros: <strong>{total}</strong>
+          </div>
+        </div>
         {loading ? (
           <div className="loading-state">
             <Loader2 className="animate-spin" size={32} />
@@ -167,9 +249,16 @@ export function Personas() {
                   <th>Nombres</th>
                   <th>Apellidos</th>
                   <th>Documento</th>
+                  <th>Tipo Doc.</th>
                   <th>Teléfono</th>
+                  <th>Teléfono Wap</th>
                   <th>Departamento</th>
                   <th>Municipio</th>
+                  <th>Tipo</th>
+                  <th>Tipo Reg.</th>
+                  <th>Clasif. Reg.</th>
+                  <th>Estructura</th>
+                  <th>Acciones</th>
                 </tr>
               </thead>
               <tbody>
@@ -178,13 +267,52 @@ export function Personas() {
                     <td>{persona.nombres}</td>
                     <td>{persona.apellidos}</td>
                     <td>{persona.numDoc || '-'}</td>
+                    <td>{persona.tipoDocumento || '-'}</td>
                     <td>{persona.telefono}</td>
+                    <td>{persona.telefonoWap || '-'}</td>
                     <td>{persona.departamento}</td>
                     <td>{persona.municipio}</td>
+                    <td>{persona.tipo || '-'}</td>
+                    <td>{persona.tipoRegistro || '-'}</td>
+                    <td>{persona.clasificacionRegistro || '-'}</td>
+                    <td>{persona.TipoEstructuraRegistro || '-'}</td>
+                    <td>
+                      <button
+                        className="btn btn-secondary btn-icon"
+                        onClick={() => handleDelete(persona.id)}
+                        disabled={deletingId === persona.id}
+                        title="Eliminar"
+                        style={{ color: '#ef4444' }}
+                      >
+                        {deletingId === persona.id ? <Loader2 className="animate-spin" size={16} /> : <Trash2 size={16} />}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {!loading && total > 0 && (
+          <div className="pagination" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem' }}>
+            <button 
+              className="btn btn-secondary" 
+              disabled={page === 1}
+              onClick={() => setPage(p => p - 1)}
+            >
+              <ChevronLeft size={16} /> Anterior
+            </button>
+            <span style={{ color: 'var(--text-secondary)' }}>
+              Página {page} de {Math.ceil(total / limit) || 1}
+            </span>
+            <button 
+              className="btn btn-secondary" 
+              disabled={page >= Math.ceil(total / limit)}
+              onClick={() => setPage(p => p + 1)}
+            >
+              Siguiente <ChevronRight size={16} />
+            </button>
           </div>
         )}
       </div>

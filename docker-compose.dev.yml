@@ -13,8 +13,12 @@ services:
     environment:
       - NODE_ENV=development
       - PORT=2785
-      - DATABASE_TYPE=sqlite
-      - DATABASE_NAME=/app/data/openwa.sqlite
+      - DATABASE_TYPE=postgres
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USERNAME=openwa
+      - DATABASE_PASSWORD=openwa
+      - DATABASE_NAME=openwa
       - DATABASE_SYNCHRONIZE=true
       - ENGINE_TYPE=whatsapp-web.js
       - SESSION_DATA_PATH=/app/data/sessions
@@ -53,6 +57,29 @@ services:
       openwa:
         condition: service_healthy
     restart: unless-stopped
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: openwa-postgres-dev
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:5432:5432'
+    environment:
+      POSTGRES_USER: openwa
+      POSTGRES_PASSWORD: openwa
+      POSTGRES_DB: openwa
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U openwa']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres-data:
+    driver: local
 
 networks:
   default:

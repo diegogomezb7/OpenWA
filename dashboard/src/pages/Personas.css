@@ -66,3 +66,19 @@
 .data-table tr:last-child td {
   border-bottom: none;
 }
+
+.data-table th:last-child,
+.data-table td:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+}
+
+.data-table th:last-child {
+  background: var(--bg-secondary);
+}
+
+.data-table td:last-child {
+  background: var(--bg-primary, white);
+  border-left: 1px solid var(--border-color);
+}
